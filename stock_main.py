@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 import yfinance as yf
 import matplotlib.pyplot as plt
@@ -601,7 +600,7 @@ if st.button("Run Analysis"):
                         mode='lines',
                         name='SMA 20',
                         line=dict(color='blue')
-                    ))
+                    )
                 
                 if 'SMA_50' in tech_df.columns:
                     fig.add_trace(go.Scatter(
@@ -610,7 +609,7 @@ if st.button("Run Analysis"):
                         mode='lines',
                         name='SMA 50',
                         line=dict(color='orange')
-                    ))
+                    )
                 
                 if 'EMA_20' in tech_df.columns:
                     fig.add_trace(go.Scatter(
@@ -619,7 +618,7 @@ if st.button("Run Analysis"):
                         mode='lines',
                         name='EMA 20',
                         line=dict(color='green', dash='dash')
-                    ))
+                    )
                 
                 fig.update_layout(
                     title="Price with Moving Averages",
@@ -638,30 +637,31 @@ if st.button("Run Analysis"):
                         mode='lines',
                         name='RSI',
                         line=dict(color='purple')
-                    ))
+                    )
                     
                     # Add horizontal lines at 30 and 70
-                     fig.add_shape(
-		         type="line",
-                         x0=tech_df.index[0], y0=30,
-                         x1=tech_df.index[-1], y1=30,
-                         line=dict(color="red", dash="dash")
-		     )
-                     fig.add_shape(
-	                 type="line",
-                         x0=tech_df.index[0], y0=70,
-                         x1=tech_df.index[-1], y1=70,
-                         line=dict(color="red", dash="dash")
-		     )
-                     fig.update_layout(
+                    fig.add_shape(
+                        type="line",
+                        x0=tech_df.index[0], y0=30,
+                        x1=tech_df.index[-1], y1=30,
+                        line=dict(color="red", dash="dash")
+                    )
+                    fig.add_shape(
+                        type="line",
+                        x0=tech_df.index[0], y0=70,
+                        x1=tech_df.index[-1], y1=70,
+                        line=dict(color="red", dash="dash")
+                    )
+                    fig.update_layout(
                         title="Relative Strength Index (RSI)",
                         yaxis=dict(range=[0, 100]),
                         height=400
-                     )
-                     st.plotly_chart(fig, use_container_width=True)
-             with tab3:
-                 st.subheader("Next Day Price Predictions")
-                 try:
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            with tab3:
+                st.subheader("Next Day Price Predictions")
+                try:
                     recent_df = df.iloc[-training_window:]
 
                     if selected_model == "Ensemble (All Models)":
@@ -676,7 +676,7 @@ if st.button("Run Analysis"):
                         next_close = predict_next_day(recent_df, 'Close', selected_model)
 
                     next_trading_day = df.index[-1] + pd.Timedelta(days=1)
-                    if next_trading_day.weekday() >= 5:
+                    if next_trading_day.weekday() >= 5:  # Handle weekends
                         next_trading_day += pd.Timedelta(days=7 - next_trading_day.weekday())
 
                     st.markdown(f"**Predictions for {next_trading_day.strftime('%A, %B %d, %Y')}**")
@@ -684,17 +684,17 @@ if st.button("Run Analysis"):
 
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Open", f"₹{next_open:.2f}",
-                                  f"{((next_open - current_close) / current_close * 100):.2f}%")
+                        st.metric("Open", f"₹{next_open:.2f}", 
+                                  f"{((next_open - current_close)/current_close*100:.2f}%")
                     with col2:
-                        st.metric("High", f"₹{next_high:.2f}",
-                                  f"{((next_high - current_close) / current_close * 100):.2f}%")
+                        st.metric("High", f"₹{next_high:.2f}", 
+                                  f"{((next_high - current_close)/current_close*100:.2f}%")
                     with col3:
-                        st.metric("Low", f"₹{next_low:.2f}",
-                                  f"{((next_low - current_close) / current_close * 100):.2f}%")
+                        st.metric("Low", f"₹{next_low:.2f}", 
+                                  f"{((next_low - current_close)/current_close*100:.2f}%")
                     with col4:
-                        st.metric("Close", f"₹{next_close:.2f}",
-                                  f"{((next_close - current_close) / current_close * 100):.2f}%")
+                        st.metric("Close", f"₹{next_close:.2f}", 
+                                  f"{((next_close - current_close)/current_close*100:.2f}%")
 
                 except Exception as e:
                     st.error(f"Error generating predictions: {e}")
@@ -718,42 +718,8 @@ if st.button("Run Analysis"):
                 except Exception as e:
                     st.error(f"Error generating feature importance: {e}")
 
-            # Insights section
-            st.markdown("---")
-            st.subheader("Additional Insights")
-            try:
-                latest_data = df.iloc[-1]
-                prev_data = df.iloc[-2]
-                current_close = latest_data['Close']
-                prev_close = prev_data['Close']
-
-                insights = []
-                if current_close > prev_close:
-                    insights.append("• Stock closed higher yesterday, showing positive momentum.")
-                else:
-                    insights.append("• Stock closed lower yesterday, showing negative momentum.")
-
-                short_sma = df['Close'].rolling(20).mean().iloc[-1]
-                long_sma = df['Close'].rolling(50).mean().iloc[-1]
-                if short_sma > long_sma and df['Close'].rolling(20).mean().iloc[-2] <= \
-                        df['Close'].rolling(50).mean().iloc[-2]:
-                    insights.append("• Golden Cross detected (bullish signal)")
-                elif short_sma < long_sma and df['Close'].rolling(20).mean().iloc[-2] >= \
-                        df['Close'].rolling(50).mean().iloc[-2]:
-                    insights.append("• Death Cross detected (bearish signal)")
-
-                if 'Volume' in df.columns:
-                    avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
-                    if latest_data['Volume'] > avg_vol * 1.5:
-                        insights.append("• High volume detected - strong market interest")
-                    elif latest_data['Volume'] < avg_vol * 0.5:
-                        insights.append("• Low volume detected - weak market interest")
-
-                for insight in insights:
-                    st.markdown(insight)
-
-            except Exception as e:
-                st.error(f"Error generating insights: {e}")
+            # Display additional insights
+            display_additional_insights(df)
 
             # Footer
             st.markdown("---")
@@ -761,6 +727,3 @@ if st.button("Run Analysis"):
             **Disclaimer**: This tool is for educational purposes only. 
             Past performance is not indicative of future results.
             """)
-
-
-
