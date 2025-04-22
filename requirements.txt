@@ -1,10 +1,10 @@
 streamlit==1.29.0
 pandas==1.3.5
 numpy==1.21.0
-yfinance==0.1.87 # Check for the latest version
-matplotlib==3.4.3 # Or the latest version you are using
+yfinance==0.1.87
+matplotlib==3.4.3
 seaborn==0.11.2
 scikit-learn==0.24.2
-xgboost==1.5.0 # Or the latest
-ta-lib==0.4.0 # If you have installed using pip
+xgboost==1.5.0
+ta-lib==0.4.0
 plotly==5.18.0
