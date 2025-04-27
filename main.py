@@ -1,204 +1,314 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-import plotly.graph_objs as go
-from sklearn.ensemble import RandomForestRegressor
+import yfinance as yf
 from xgboost import XGBRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import r2_score
-from sklearn.metrics import mean_absolute_error
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-
-# --------------------------------------
-# TECHNICAL INDICATORS FUNCTION
-# --------------------------------------
-def add_technical_indicators(df):
-    df = df.copy()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['MA50'] = df['Close'].rolling(window=50).mean()
-    df['RSI'] = compute_rsi(df['Close'], 14)
-    df['UpperBB'], df['LowerBB'] = bollinger_bands(df['Close'])
-    df['MACD'], df['MACD_signal'] = macd(df['Close'])
-    df['OBV'] = obv(df['Close'], df['Volume'])
-    df['ATR'] = atr(df['High'], df['Low'], df['Close'])
-    df['VWAP'] = (df['Close'] * df['Volume']).cumsum() / df['Volume'].cumsum()
-    df['Momentum'] = df['Close'] - df['Close'].shift(10)
-    df['SuperTrend'] = df['Close']
-    nine_high = df['High'].rolling(window=9).max()
-    nine_low = df['Low'].rolling(window=9).min()
-    df['Ichimoku_conversion'] = (nine_high + nine_low) / 2
-    twenty_six_high = df['High'].rolling(window=26).max()
-    twenty_six_low = df['Low'].rolling(window=26).min()
-    df['Ichimoku_base'] = (twenty_six_high + twenty_six_low) / 2
-    return df
-
-def compute_rsi(series, period):
-    delta = series.diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=period).mean()
-    avg_loss = loss.rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
-
-def bollinger_bands(series, window=20):
-    sma = series.rolling(window=window).mean()
-    std = series.rolling(window=window).std()
-    return sma + 2*std, sma - 2*std
-
-def macd(series):
-    exp1 = series.ewm(span=12, adjust=False).mean()
-    exp2 = series.ewm(span=26, adjust=False).mean()
-    macd_line = exp1 - exp2
-    signal = macd_line.ewm(span=9, adjust=False).mean()
-    return macd_line, signal
-
-def obv(close_series, volume_series):
-    close = close_series.squeeze()
-    volume = volume_series.squeeze()
-
-    obv_values = [0]
-    for i in range(1, len(close)):
-        if close.iloc[i] > close.iloc[i - 1]:
-            obv_values.append(obv_values[-1] + volume.iloc[i])
-        elif close.iloc[i] < close.iloc[i - 1]:
-            obv_values.append(obv_values[-1] - volume.iloc[i])
-        else:
-            obv_values.append(obv_values[-1])
-    return pd.Series(obv_values, index=close.index)
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import plotly.graph_objects as go
+import requests
+import urllib.parse
+from transformers import pipeline
 
 
-def atr(high, low, close, period=14):
-    tr = pd.concat([
-        high - low,
-        (high - close.shift()).abs(),
-        (low - close.shift()).abs()
-    ], axis=1).max(axis=1)
-    return tr.rolling(window=period).mean()
+# Streamlit App Title
+st.markdown(f'<h1 style="font-size: 30px; color: #1C39BB;">📈 Stock OHLC Prediction App</h1>', unsafe_allow_html=True)
+# Select stock and date range
+stock_symbol = st.text_input("Enter NSE stock symbol (e.g. BEL.NS):", "BEL.NS")
+start_date = st.date_input("Start Date", pd.to_datetime("2022-01-01"))
+end_date = st.date_input("End Date", pd.to_datetime("today"))
 
-# --------------------------------------
-# APP START
-# --------------------------------------
-st.title("📈 Indian Stock Market Prediction & Analysis")
-
-stocks = {
-    'BAHART ELECTRONIC LTD': 'BEL.NS',
-    'TATAMOTOR': 'TATAMOTORS.NS',
-    'RAILTEL': 'RAILTEL.NS',
-    'NATIONAL ALUMINIUM': 'NATIONALUM.NS',
-    'RELIANCE': 'RELIANCE.NS',
-    'TATA POWER': 'TATAPOWER.NS',
-    'TCS': 'TCS.NS',
-    'INFY': 'INFY.NS'
-}
-stock_name = st.selectbox("Select Stock", list(stocks.keys()))
-ticker = stocks[stock_name]
-
-period = st.slider("Select data period (days)", 30, 730, 180)
-start_date = datetime.now() - timedelta(days=period)
-end_date = datetime.now()
-
-@st.cache_data
-
-def get_data(ticker, start, end):
-    df = yf.download(ticker, start=start, end=end + timedelta(days=1), interval='1d')
-    if df.empty:
-        st.error("No data found for the given ticker.")
-        return df
-    df = add_technical_indicators(df)
-    return df
-
-df = get_data(ticker, start_date, end_date)
-if df.empty:
+if start_date >= end_date:
+    st.warning("⚠️ End date must be after start date.")
     st.stop()
 
-st.subheader("Raw Data with Indicators")
-st.dataframe(df.tail())
+# Download historical data
+raw_df = yf.download(stock_symbol, start=start_date, end=end_date + pd.Timedelta(days=1))
+
+if raw_df.empty:
+    st.warning("⚠️ No data found. Please check the stock symbol.")
+    st.stop()
+
+st.markdown(f'<h1 style="font-size: 20px; color: #1C39BB;">Showing data for {stock_symbol}</h1>', unsafe_allow_html=True)
+st.dataframe(raw_df.tail())
 
 # Feature Engineering
-feature_columns = [
-    'MA20', 'MA50', 'RSI', 'UpperBB', 'LowerBB',
-    'MACD', 'MACD_signal', 'OBV', 'ATR', 'VWAP',
-    'Momentum', 'SuperTrend', 'Ichimoku_conversion', 'Ichimoku_base'
-]
+df = raw_df.copy()
+df['MA5'] = df['Close'].rolling(window=5).mean()
+df['MA10'] = df['Close'].rolling(window=10).mean()
+df['Returns'] = df['Close'].pct_change()
+df['Volatility'] = df['Returns'].rolling(window=5).std()
+df['RSI'] = 100 - (100 / (1 + df['Returns'].rolling(window=14).mean() / df['Returns'].rolling(window=14).std()))
+df['Bollinger Upper'] = df['Close'].rolling(window=20).mean() + 2 * df['Close'].rolling(window=20).std()
+df['Bollinger Lower'] = df['Close'].rolling(window=20).mean() - 2 * df['Close'].rolling(window=20).std()
 df.dropna(inplace=True)
-features = df[feature_columns]
-y = df['Close'].loc[features.index]
 
+# Trend Labels Based on Indicators
+df['Trend_MA'] = np.where(df['MA5'] > df['MA10'], 1, 0)
+df['Trend_RSI'] = np.where(df['RSI'] > 50, 1, 0)
+df = df[df['Bollinger Upper'].notnull() & df['Bollinger Lower'].notnull()]
+
+boll_upper = df['Bollinger Upper'].values.flatten()
+boll_lower = df['Bollinger Lower'].values.flatten()
+close_vals = df['Close'].values.flatten()
+
+trend_bollinger = np.where(close_vals > boll_upper, 1,
+                   np.where(close_vals < boll_lower, 0, 1))
+
+df['Trend_Bollinger'] = trend_bollinger
+
+trend_features = ['Trend_MA', 'Trend_RSI', 'Trend_Bollinger']
+df['Overall_Trend'] = df[trend_features].mean(axis=1).round().astype(int)
+
+# Features for ML
+feature_columns = ['Open', 'High', 'Low', 'Volume', 'MA5', 'MA10', 'Returns', 'Volatility', 'RSI']
+X = df[feature_columns]
+
+# Targets: Open, High, Low, Close
+ohlc_targets = ['Open', 'High', 'Low', 'Close']
+y_ohlc = df[ohlc_targets].loc[X.index]
+
+# Scale the features
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(features)
+X_scaled = scaler.fit_transform(X)
 
-# BACKTESTING
-model = XGBRegressor(n_estimators=100)
+# MultiOutput Regressor
+model = MultiOutputRegressor(XGBRegressor(n_estimators=100, random_state=42))
 split = int(len(X_scaled) * 0.8)
-model.fit(X_scaled[:split], y[:split])
-y_pred = model.predict(X_scaled[split:])
+model.fit(X_scaled[:split], y_ohlc.iloc[:split])
+y_ohlc_pred = model.predict(X_scaled[split:])
 
-# Ensure 1D arrays for metrics
-actual = y[split:].values.flatten()
-predicted = y_pred.flatten()
+# Predict next day's OHLC
+X_last_scaled = scaler.transform(df[feature_columns].iloc[[-1]])
+predicted_ohlc = model.predict(X_last_scaled)[0]
 
-rmse = np.sqrt(mean_squared_error(actual, predicted))
-mape = np.mean(np.abs((actual - predicted) / actual)) * 100
-mae = mean_absolute_error(actual, predicted)
-r2 = r2_score(actual, predicted)
+# Yesterday's OHLC
+yesterday_ohlc = raw_df[ohlc_targets].iloc[-2].values
 
-# Backtesting Price Comparison Plot
-st.write("### 📉 Actual vs Predicted Close Price")
+# Latest OHLC (today's actual)
+today_ohlc = raw_df[ohlc_targets].iloc[-1].values
+
+# Display comparison table
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">🔍 Yesterday vs Today vs Predicted (Next Day) OHLC for {stock_symbol}</h2>', unsafe_allow_html=True)
+
+comparison_df = pd.DataFrame({
+    'Yesterday': yesterday_ohlc.flatten(),
+    'Today': today_ohlc.flatten(),
+    'Predicted (Next Day)': predicted_ohlc.flatten()
+}, index=ohlc_targets)
+
+st.dataframe(comparison_df)
+
+# Indicator Summary Table
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">🧭 Indicator Trends Table for {stock_symbol}</h2>', unsafe_allow_html=True)
+indicator_table = pd.DataFrame({
+    'MA Trend': ['Uptrend' if df['Trend_MA'].iloc[-1] else 'Downtrend'],
+    'RSI Trend': ['Bullish' if df['Trend_RSI'].iloc[-1] else 'Bearish'],
+    'Bollinger Trend': ['Above Upper Band' if df['Trend_Bollinger'].iloc[-1] == 1 else ('Below Lower Band' if df['Trend_Bollinger'].iloc[-1] == 0 else 'Within Band')],
+    'ML Trend Prediction': ['Uptrend' if df['Overall_Trend'].iloc[-1] else 'Downtrend']
+})
+st.dataframe(indicator_table)
+
+# Show current trend based on MA crossover
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">📊 Current ML-Based Market Trend for {stock_symbol}"</h2>', unsafe_allow_html=True)
+
+st.write(f"The market for {stock_symbol} is predicted to be in an **{'Uptrend' if df['Overall_Trend'].iloc[-1] else 'Downtrend'}**.")
+
+# Actual vs Predicted Close Plot
+actual_close = y_ohlc['Close'].iloc[split:].values.flatten()
+pred_close = y_ohlc_pred[:, 3].flatten()
 
 plot_df = pd.DataFrame({
-    'Actual': actual,
-    'Predicted': predicted
-}, index=y[split:].index)
+    'Actual': actual_close,
+    'Predicted': pred_close
+}, index=y_ohlc.iloc[split:].index)
+
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">📉 Actual vs Predicted Close Price for {stock_symbol}</h2>', unsafe_allow_html=True)
 
 fig = go.Figure()
-fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Actual'], mode='lines', name='Actual Price'))
-fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Predicted'], mode='lines', name='Predicted Price'))
+fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Actual'], mode='lines', name='Actual Close'))
+fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df['Predicted'], mode='lines', name='Predicted Close'))
 fig.update_layout(
-    title="Actual vs Predicted Close Prices (Backtest)",
+    title=f"Actual vs Predicted Close Prices (Backtest) - {stock_symbol}",
     xaxis_title="Date",
     yaxis_title="Price (₹)",
     legend=dict(x=0, y=1.0),
     margin=dict(l=40, r=40, t=40, b=40)
 )
 st.plotly_chart(fig, use_container_width=True)
-st.write("### 🔁 Backtesting Results")
-st.write(f"**RMSE on Last {len(actual)} Days:** {rmse:.2f}")
-st.write(f"**MAPE (Mean Absolute Percentage Error):** {mape:.2f}%")
-st.write(f"**MAE (Mean Absolute Error):** {mae:.2f}")
-st.write(f"**R² Score:** {r2:.2f}")
+# Create table for last 7 working days
+last_7_days_data = plot_df.tail(7)
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">💰 Actual vs Predicted Close Price for Last 7 Working Days for {stock_symbol}</h2>', unsafe_allow_html=True)
+st.dataframe(last_7_days_data)
+# Backtesting Metrics
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">📈 Backtesting Summary for {stock_symbol}</h2>', unsafe_allow_html=True)
 
-# PREDICTION
-X_last_raw = df[feature_columns].iloc[-1:]
-X_last_scaled = scaler.transform(X_last_raw)
-predicted_price = float(model.predict(X_last_scaled)[0])
-latest_close = float(df['Close'].iloc[-1])
+mae = mean_absolute_error(actual_close, pred_close)
+mse = mean_squared_error(actual_close, pred_close)
+rmse = np.sqrt(mse)
+r2 = r2_score(actual_close, pred_close)
+
+backtest_metrics = pd.DataFrame({
+    'Metric': ['MAE', 'MSE', 'RMSE', 'R² Score'],
+    'Value': [mae, mse, rmse, r2]
+})
+
+st.dataframe(backtest_metrics.style.format({"Value": "{:.4f}"}))
+
+# User-Friendly Summary of Backtesting with Accuracy Estimate
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">📘 What Do These Metrics Mean for {stock_symbol}?</h2>', unsafe_allow_html=True)
+st.markdown(f"""
+- **MAE (Mean Absolute Error)**: On average, the model's predictions for {stock_symbol} were ₹{mae:.2f} away from the actual closing prices.
+- **RMSE (Root Mean Squared Error)**: This penalizes larger errors more than MAE. A lower value means better accuracy.
+- **R² Score**: This tells how well the model explains the price movements for {stock_symbol}. A value closer to 1 means a better fit. 
+  - **Accuracy Estimate**: Based on the R² score of {r2:.4f}, the model is approximately **{r2 * 100:.2f}% accurate** in predicting the closing prices for {stock_symbol}.
+""")
+
+# Additional insights and user-friendly summary
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">🧠 Additional Insights & Sentiment Analysis for {stock_symbol}</h2>', unsafe_allow_html=True)
+
+# News Sentiment Analysis
+# 📰 News & FinBERT Sentiment Analysis Section
+st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">📰 News & Sentiment Analysis for {stock_symbol}</h2>', unsafe_allow_html=True)
+
+
+API_KEY = st.secrets["newsapi"]["api_key"]  # Replace with your actual NewsAPI key
+
+# FinBERT setup
+@st.cache_resource
+def load_finbert():
+    return pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone")
+
+finbert = load_finbert()
+
+# Get stock news function (using company name now!)
+def get_stock_news(stock_symbol, api_key):
+    company_mapping = {
+        'BEL.NS': 'Bharat Electronics Ltd',
+        'RAILTEL.NS': 'RailTel Corporation of India Ltd.Indian Navaratna Public Sector',
+        'TATAMOTORS.NS': 'Tata Motors',
+        'TATAPOWER.NS': 'Tata Power',
+        'TCS.NS': 'Tata Consultancy Services',
+        'INFY.NS': 'Infosys',
+        'RELIANCE.NS': 'Reliance Industries',
+        'BDL.NS': 'Bharat Dynamics Ltd',
+        'NATIONALUM.NS': 'National Aluminium Company',
+        'DLF.NS': 'DLF Limited',
+        'TITAN.NS': 'Titan Company Ltd',
+        'BPCL.NS': 'Bharat Petroleum Corporation Limited'
+
+        # add more mappings as needed
+    }
+    company_name = company_mapping.get(stock_symbol.upper(), stock_symbol)
+
+    query = urllib.parse.quote(company_name)
+
+    # 🎯 Fetch recent news only (last 7 days)
+    today = pd.to_datetime("today").date()
+    seven_days_ago = today - pd.Timedelta(days=7)
+
+    url = (
+        f"https://newsapi.org/v2/everything?"
+        f"q={query}&"
+        f"from={seven_days_ago}&to={today}&"
+        f"sortBy=publishedAt&"
+        f"language=en&"
+        f"pageSize=10&"
+        f"apiKey={api_key}"
+    )
+
+    response = requests.get(url)
+    if response.status_code == 200:
+        news_data = response.json()
+        return [article['title'] for article in news_data['articles']]
+    else:
+        return []
+
+# FinBERT sentiment analyzer
+def analyze_sentiment(news_headlines):
+    results = []
+    for headline in news_headlines:
+        result = finbert(headline)[0]
+        results.append({
+            'headline': headline,
+            'sentiment': result['label'].capitalize(),  # Positive / Negative / Neutral
+            'score': result['score']
+        })
+    return results
 
 try:
-    current_price = float(yf.Ticker(ticker).info['currentPrice'])
-    is_live = True
-except KeyError:
-    current_price = latest_close
-    is_live = False
+    stock_news = get_stock_news(stock_symbol, API_KEY)
 
-st.markdown(f"""
-### 📊 Current Price: ₹{current_price:.2f}
-{"<span style='background-color:#00cc44;color:white;padding:4px 8px;border-radius:10px;font-size:0.8rem;'>LIVE</span>" if is_live else "<span style='background-color:#999;color:white;padding:4px 8px;border-radius:10px;font-size:0.8rem;'>CLOSE</span>"}
-""", unsafe_allow_html=True)
+    if stock_news:
+        st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">📰 Latest News Headlines for {stock_symbol}</h2>', unsafe_allow_html=True)
+        for news in stock_news:
+            st.write(f"- {news}")
 
-st.markdown(f"""
-<small>Yesterday's Close: ₹{latest_close:.2f}</small>
-""", unsafe_allow_html=True)
+        # Analyze with FinBERT
+        sentiment_results = analyze_sentiment(stock_news)
 
-recommendation = "BUY" if predicted_price > current_price else "SELL"
-st.subheader(f"🔮 Predicted Next Close: ₹{predicted_price:.2f} → **{recommendation}**")
+        # Display sentiment for each headline
+        st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">🧠 Sentiment Analysis of News Headlines</h2>',
+                    unsafe_allow_html=True)
 
-returns = df['Close'].pct_change().dropna()
-volatility = float(returns.std() * np.sqrt(252))
-sharpe_ratio = float(returns.mean() / returns.std())
 
-st.write("### ⚠️ Risk Assessment")
-st.write(f"**Annualized Volatility:** {volatility:.2%}")
-st.write(f"**Sharpe Ratio (no risk-free adj.):** {sharpe_ratio:.2f}")
+        for item in sentiment_results:
+            st.write(f"**{item['sentiment']}** ({item['score']:.2f}): {item['headline']}")
+
+        # Aggregate counts
+        sentiment_counts = {'Positive': 0, 'Negative': 0, 'Neutral': 0}
+        for item in sentiment_results:
+            sentiment_counts[item['sentiment']] += 1
+
+        # Display overall
+        total = sum(sentiment_counts.values())
+        if total > 0:
+            overall_sentiment = max(sentiment_counts, key=sentiment_counts.get)
+            st.write(f'<h2 style="font-size: 24px; color: #1C39BB;"> 📊 Overall Sentiment for {stock_symbol}: **{overall_sentiment}**</h2>', unsafe_allow_html=True)
+
+
+        else:
+            st.write(
+                f'<h2 style="font-size: 24px; color: #1C39BB;"> "No news available to analyze for {stock_symbol}.</h2>',
+                unsafe_allow_html=True)
+
+
+        # Beautiful bar chart 📊
+
+        st.write(
+            f'<h2 style="font-size: 24px; color: #1C39BB;"> 📈 Sentiment Distribution Chart for {stock_symbol}.</h2>',
+            unsafe_allow_html=True)
+
+
+
+        import plotly.express as px
+
+        fig = px.bar(
+            x=list(sentiment_counts.keys()),
+            y=list(sentiment_counts.values()),
+            labels={'x': 'Sentiment', 'y': 'Number of Articles'},
+            title=f"Sentiment Breakdown for {stock_symbol}",
+            color=list(sentiment_counts.keys()),
+            color_discrete_map={
+                "Positive": "green",
+                "Negative": "red",
+                "Neutral": "blue"
+            }
+        )
+        fig.update_layout(showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        st.warning(f"No news found for {stock_symbol}.")
+
+except Exception as e:
+    st.error(f"⚠️ Error fetching or analyzing news for {stock_symbol}: {e}")
+
+
+# Plain Summary for Non-Technical Users
+st.write(
+            f'<h2 style="font-size: 24px; color: #1C39BB;">📊 Easy-to-Understand Summary for {stock_symbol}</h2>',
+            unsafe_allow_html=True)
+
+st.info(f"Coming soon: Plain-language insights for {stock_symbol}, including potential risk levels and trend summaries for non-technical users.")
