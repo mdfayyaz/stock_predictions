@@ -61,11 +61,10 @@ with tab1:
         st.warning("⚠️ End date must be after start date.")
         st.stop()
 
-
+    
     # Download historical data
     @st.cache_data(ttl=3600)
     def get_stock_data(symbol, start, end):
-            data.index = data.index.tz_localize(pytz.UTC)  # Standardize to UTC
         try:
             data = yf.download(symbol, start=start, end=end + pd.Timedelta(days=1))
             if data.empty:
