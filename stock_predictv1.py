@@ -36,10 +36,10 @@ st.set_page_config(layout="wide", page_title="Advanced Stock OHLC Prediction")
 
 # Streamlit App Title with enhanced styling
 st.markdown(
-    f'<h1 style="font-size: 36px; color: #1C39BB; text-align: center;">📈 Advanced Stock OHLC Prediction App</h1>',
+    f'<h1 style="font-size: 36px; color: #1C39BB; text-align: center;">📈 Advanced Stock OHLC Prediction App by Fayyaz</h1>',
     unsafe_allow_html=True)
 st.markdown(
-    f'<p style="font-size: 16px; color: #666; text-align: center;">Multi-model ensemble forecasting with advanced technical indicators and sentiment analysis</p>',
+    f'<p style="font-size: 16px; color: #666; text-align: center;">Multi-model ensemble forecasting with advanced technical indicators and sentiment analysis.</p>',
     unsafe_allow_html=True)
 
 # Create tabs for different sections
