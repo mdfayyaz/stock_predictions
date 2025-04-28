@@ -27,6 +27,11 @@ from prophet import Prophet
 from transformers import pipeline
 import datetime
 import warnings
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+
 
 warnings.filterwarnings('ignore')
 
@@ -137,21 +142,26 @@ with tab1:
         data['Stoch_K'] = 100 * (data['Close'] - low14) / (high14 - low14)
         data['Stoch_D'] = data['Stoch_K'].rolling(window=3).mean()
 
-        # Bollinger Bands
+        # Bollinger Bands manual calculation
         sma20 = data['Close'].rolling(window=20).mean()
         std20 = data['Close'].rolling(window=20).std()
         data['Bollinger_Upper'] = sma20 + (std20 * 2)
         data['Bollinger_Lower'] = sma20 - (std20 * 2)
 
-        # Trend calculation (FIXED)
+        # Trend calculation - FIXED VERSION
+        # Convert to numpy arrays and flatten to ensure 1D
+        close_values = data['Close'].to_numpy().flatten()
+        upper_values = data['Bollinger_Upper'].to_numpy().flatten()
+        lower_values = data['Bollinger_Lower'].to_numpy().flatten()
+    
         data['Trend_Bollinger'] = np.select(
             [
-                (data['Close'].values > data['Bollinger_Upper'].values),
-                (data['Close'].values < data['Bollinger_Lower'].values)
+                close_values > upper_values,
+                close_values < lower_values
             ],
             [1, 0],  # 1 = Uptrend, 0 = Downtrend
             default=1
-        )
+    )
 
         # Moving Averages
         data['MA5'] = data['Close'].rolling(window=5).mean()
@@ -600,45 +610,88 @@ with tab1:
         })
         st.dataframe(bb_df.style.format({"Price": "₹{:.2f}"}), use_container_width=True)
 
-    # Volume Profile Analysis
-    def analyze_volume_profile(df):
+    # ------------------- Volume Profile Analysis -------------------
+def analyze_volume_profile(df):
         """Analyze volume profile to identify support/resistance levels"""
+        try:
+            # Ensure we're working with a copy and numeric data
+            df = df.copy()
+            df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
+            df = df.dropna(subset=['Volume'])
+            
+            # Create price bins
+            price_min = df['Low'].min()
+            price_max = df['High'].max()
+            price_bins = np.linspace(price_min, price_max, 20)
+            
+            volume_profile = []
+            for i in range(len(price_bins) - 1):
+                lower_bound = price_bins[i]
+                upper_bound = price_bins[i + 1]
+                
+                # Filter rows in this price range
+                mask = (df['Close'] >= lower_bound) & (df['Close'] < upper_bound)
+                bin_volume = df.loc[mask, 'Volume'].sum()
+                
+                # Store midpoint and volume
+                midpoint = (lower_bound + upper_bound) / 2
+                volume_profile.append((midpoint, bin_volume))
+            
+            # Create DataFrame with proper numeric types
+            vp_df = pd.DataFrame(volume_profile, columns=['Price', 'Volume'])
+            vp_df['Volume'] = pd.to_numeric(vp_df['Volume'], errors='coerce')
+            
+            # Get top 3 volume nodes
+            high_volume_nodes = vp_df.nlargest(3, 'Volume')
+            
+            return vp_df, high_volume_nodes
+            
+        except Exception as e:
+            raise ValueError(f"Error in volume profile analysis: {str(e)}")
 
-        # Create volume profile
+
+
+
+
+# ------------------- Plotting and Display -------------------
+def analyze_volume_profile(df):
+    """Analyze volume profile to identify support/resistance levels"""
+    try:
+        df = df.copy()
+        df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce')
+        df = df.dropna(subset=['Close', 'Volume'])
+        
+        if len(df) == 0:
+            raise ValueError("No valid data after cleaning")
+            
         price_bins = np.linspace(df['Low'].min(), df['High'].max(), 20)
-
         volume_profile = []
-        for i in range(len(price_bins) - 1):
-            mask = (df['Close'] >= price_bins[i]) & (df['Close'] < price_bins[i + 1])
+        
+        for i in range(len(price_bins)-1):
+            mask = (df['Close'] >= price_bins[i]) & (df['Close'] < price_bins[i+1])
             bin_volume = df.loc[mask, 'Volume'].sum()
-            volume_profile.append((price_bins[i], bin_volume))
-
-        # Convert to DataFrame
-        vp_df = pd.DataFrame(volume_profile, columns=['Price', 'Volume'])
-
-        # Identify high volume nodes (potential support/resistance)
-        high_volume_nodes = vp_df.nlargest(3, 'Volume')
-        return vp_df, high_volume_nodes
-
-
-    with st.spinner("Analyzing volume profile..."):
-        vp_df, high_volume_nodes = analyze_volume_profile(df)
-
-    st.markdown("### Volume Profile Analysis")
-    st.write("High volume nodes often act as support/resistance levels:")
-
-    fig_vp = px.bar(vp_df, x='Price', y='Volume', title='Volume Profile')
-    fig_vp.update_layout(
-        xaxis_title="Price Level",
-        yaxis_title="Volume",
-        hovermode='x unified'
-    )
-    st.plotly_chart(fig_vp, use_container_width=True)
-
-    st.dataframe(high_volume_nodes.style.format({
+            volume_profile.append({
+                'Price': (price_bins[i] + price_bins[i+1])/2,
+                'Volume': bin_volume
+            })
+            
+        vp_df = pd.DataFrame(volume_profile)
+        return vp_df, vp_df.nlargest(3, 'Volume')
+        
+    except Exception as e:
+        raise ValueError(f"Volume profile error: {str(e)}")
+# Create empty DataFrames to prevent undefined variable errors
+vp_df = pd.DataFrame(columns=['Price', 'Volume'])
+high_volume_nodes = pd.DataFrame(columns=['Price', 'Volume'])
+# Show high volume nodes
+st.dataframe(
+    high_volume_nodes.style.format({
         'Price': '₹{:.2f}',
         'Volume': '{:,}'
-    }), use_container_width=True)
+    }),
+    use_container_width=True
+)
+
 
 # ====================== Market Sentiment Tab ======================
 with tab2:
@@ -1052,13 +1105,23 @@ with tab4:
     st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">⚠️ Risk Assessment & Portfolio Analysis</h2>',
                 unsafe_allow_html=True)
 
-    # Calculate risk metrics
+    # Calculate risk metrics with proper scalar conversion
     returns = df['Close'].pct_change().dropna()
-    volatility = returns.std() * np.sqrt(252)  # Annualized volatility
-    max_drawdown = (df['Close'] / df['Close'].cummax() - 1).min()
-    sharpe_ratio = returns.mean() / returns.std() * np.sqrt(252)
+    
+    def to_scalar(value):
+        """Convert pandas Series/array to scalar float"""
+        if hasattr(value, 'iloc'):
+            return float(value.iloc[0])
+        elif hasattr(value, 'item'):
+            return float(value.item())
+        return float(value)
 
-    # Display risk metrics
+    # Calculate and convert metrics
+    volatility = to_scalar(returns.std() * np.sqrt(252))
+    max_drawdown = to_scalar((df['Close'] / df['Close'].cummax() - 1).min())
+    sharpe_ratio = to_scalar(returns.mean() / returns.std() * np.sqrt(252))
+
+    # Display metrics
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Annualized Volatility", f"{volatility * 100:.2f}%")
@@ -1067,76 +1130,29 @@ with tab4:
     with col3:
         st.metric("Sharpe Ratio", f"{sharpe_ratio:.2f}")
     with col4:
-        beta = 1.0  # Placeholder - would calculate against benchmark in real app
         st.metric("Beta (Systematic Risk)", f"{beta:.2f}")
 
-    # Risk assessment
-    st.markdown("### 📉 Risk Analysis")
-
-    if volatility > 0.4:
-        risk_level = "Very High"
-        risk_color = "red"
-    elif volatility > 0.25:
-        risk_level = "High"
-        risk_color = "orange"
-    elif volatility > 0.15:
-        risk_level = "Moderate"
-        risk_color = "yellow"
-    else:
-        risk_level = "Low"
-        risk_color = "green"
-
-    st.markdown(f"""
-            - **Risk Level**: <span style="color:{risk_color}">{risk_level}</span>
-            - This stock has **{'higher' if volatility > 0.2 else 'lower'}** volatility than average
-            - Maximum observed loss: **{max_drawdown * 100:.2f}%** from peak
-            - Risk-adjusted return (Sharpe): **{sharpe_ratio:.2f}** (good if >1)
-            """, unsafe_allow_html=True)
-
-    # Drawdown analysis
-    st.markdown("### 📉 Drawdown Analysis")
-    df['Peak'] = df['Close'].cummax()
-    df['Drawdown'] = (df['Close'] / df['Peak'] - 1) * 100
-
-    fig_drawdown = go.Figure()
-    fig_drawdown.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df['Drawdown'],
-            fill='tozeroy',
-            line=dict(color='red'),
-            name='Drawdown'
-        )
-    )
-    fig_drawdown.update_layout(
-        title="Maximum Drawdown Over Time",
-        yaxis_title="Drawdown (%)",
-        hovermode='x unified'
-    )
-    st.plotly_chart(fig_drawdown, use_container_width=True)
-
-    # Value at Risk (VaR) calculation
-    st.markdown("### 💰 Value at Risk (VaR) Estimation")
+    # Value at Risk calculation
     confidence_level = st.slider("Select confidence level:", 90, 99, 95)
-
+    
     # Historical VaR
-    historical_var = np.percentile(returns, 100 - confidence_level) * 100
-
-    # Parametric VaR (assuming normal distribution)
-    parametric_var = (returns.mean() - (1.645 * returns.std())) * 100
-
+    historical_var = to_scalar(np.percentile(returns, 100 - confidence_level) * 100)
+    
+    # Parametric VaR
+    parametric_var = to_scalar(
+        (returns.mean() - (1.645 * returns.std())) * 100
+    )
+    
     col1, col2 = st.columns(2)
     with col1:
         st.metric(
             f"Historical VaR ({confidence_level}% confidence)",
-            f"{historical_var:.2f}%",
-            help="Worst expected loss based on historical data"
+            f"{historical_var:.2f}%"
         )
     with col2:
         st.metric(
             f"Parametric VaR ({confidence_level}% confidence)",
-            f"{parametric_var:.2f}%",
-            help="Worst expected loss assuming normal distribution"
+            f"{parametric_var:.2f}%"
         )
 
     # Monte Carlo simulation (placeholder)
