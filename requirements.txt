@@ -9,6 +9,5 @@ catboost
 plotly==5.22.0
 requests==2.31.0
 tensorflow-cpu
-ta-lib==0.4.28
 prophet==1.1.4
 transformers==4.39.3
