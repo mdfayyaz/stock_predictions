@@ -1105,6 +1105,9 @@ with tab4:
     st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">⚠️ Risk Assessment & Portfolio Analysis</h2>',
                 unsafe_allow_html=True)
 
+    # Add this line to define beta
+    beta = 1.0  # Placeholder value for demonstration
+
     # Calculate risk metrics with proper scalar conversion
     returns = df['Close'].pct_change().dropna()
     
