@@ -1,7 +1,7 @@
 streamlit==1.31.1
 pandas==2.2.1
 numpy==1.26.4
-yfinance==0.2.36
+yfinance
 xgboost==2.0.3
 scikit-learn==1.4.0
 lightgbm==4.3.0
