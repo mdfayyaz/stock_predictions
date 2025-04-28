@@ -27,6 +27,8 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
+import pytz
+
 
 warnings.filterwarnings('ignore')
 
@@ -59,71 +61,23 @@ with tab1:
         st.warning("⚠️ End date must be after start date.")
         st.stop()
 
-    
+
     # Download historical data
     @st.cache_data(ttl=3600)
     def get_stock_data(symbol, start, end):
-    try:
-        # Add validation for Indian NSE symbols
-        if ".NS" in symbol:
-            ticker = yf.Ticker(symbol)
-            if not ticker.info:
-                st.error(f"Invalid NSE symbol: {symbol}. Try BSE (.BO) if this persists.")
-                st.stop()
-        
-        # Add buffer to end date and handle timezones
-        end_date_plus = pd.to_datetime(end) + pd.Timedelta(days=3)
-        data = yf.download(
-            symbol,
-            start=start,
-            end=end_date_plus,
-            auto_adjust=True,  # Use adjusted prices
-            progress=False,
-            threads=True  # Enable multi-threading
-        )
-        
-        # Handle empty data scenarios
-        if data.empty:
-            # Try alternative method with period instead of dates
-            data = yf.download(
-                symbol,
-                period="max",
-                interval="1d",
-                progress=False
-            )
+        try:
+            data = yf.download(symbol, start=start, end=end + pd.Timedelta(days=1))
             if data.empty:
-                st.error(f"No historical data available for {symbol} on Yahoo Finance.")
-                st.markdown("**Common Solutions:**")
-                st.write("1. Verify symbol format (e.g., BEL.NS for NSE India)")
-                st.write("2. Try alternative source: [Yahoo Finance](https://finance.yahoo.com/)")
-                st.write("3. Check regional data restrictions")
+                st.error(f"No data found for {symbol}. Please check the stock symbol.")
                 st.stop()
-        
-        # Convert index to timezone-naive datetime
-        data.index = data.index.tz_localize(None)
-        
-        # Filter for requested date range
-        data = data.loc[start:end]
-        
-        return data
-    
-    except Exception as e:
-        st.error(f"Critical error fetching {symbol}: {str(e)}")
-        st.markdown("""
-            **Troubleshooting Steps:**
-            1. Refresh the page
-            2. Try different date range
-            3. Check network connection
-            4. Try alternative symbol (e.g., BEL.BO for BSE)
-            """)
-        st.stop()
+            return data
+        except Exception as e:
+            st.error(f"Error fetching data: {e}")
+            st.stop()
 
-# Usage example
-stock_symbol = "BEL.NS"  # NSE India symbol
-start_date = datetime(2023, 1, 1)
-end_date = datetime(2024, 1, 1)
 
-raw_df = get_stock_data(stock_symbol, start_date, end_date)
+    raw_df = get_stock_data(stock_symbol, start_date, end_date)
+
     # Show basic stock info
     st.markdown(f'<h2 style="font-size: 24px; color: #1C39BB;">Stock Data for {stock_symbol}</h2>',
                 unsafe_allow_html=True)
